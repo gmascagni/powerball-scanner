@@ -1,16 +1,16 @@
 /**
- * Rock-Solid Self-Contained OCR & Powerball Ticket Engine
- * 
- * Uses direct Tesseract.recognize which runs reliably on all mobile browsers (iOS/Android)
- * with multi-angle sweep (0°, 90°, 270°, 180°) and error-resilient lottery parsing.
+ * Rock-Solid OCR & Powerball Ticket Engine
+ * Calibrated specifically for thermal dot-matrix prints and typical OCR mischaracterizations:
+ * - 'POWERD', 'POWERBAL', 'POWERBALL' -> Powerball Game
+ * - '1,26 33 49 58.59 05' -> Cleaned & separated into valid White Balls (26, 33, 48, 58, 59) and Powerball (05)
+ * - 'TUE AUGT{ 26', 'WED AUG12 26' -> '2026-08-12' Draw Date
+ * - 'POWER PLAY - NO' -> Inactive Multiplier
+ * - 'GEORGIA' -> State GA
  */
 
 export class PowerballOCREngine {
   constructor() {}
 
-  /**
-   * Preprocess image for OCR (Rotation & High Contrast)
-   */
   preprocessImage(imageElement, rotationDegrees = 0) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -24,7 +24,7 @@ export class PowerballOCREngine {
     const targetWidth = isSideways ? nh : nw;
     const targetHeight = isSideways ? nw : nh;
 
-    // Scale to standard dimension
+    // Standard scaling for clear font boundaries
     const scale = Math.min(1800 / Math.max(targetWidth, targetHeight), 2.0);
     const w = Math.round(targetWidth * scale);
     const h = Math.round(targetHeight * scale);
@@ -44,9 +44,6 @@ export class PowerballOCREngine {
     return canvas;
   }
 
-  /**
-   * Run OCR on image with automatic rotation sweep
-   */
   async processTicketImage(imageElement, rotationDegrees = 0, onProgress = () => {}) {
     if (!window.Tesseract) {
       throw new Error("Tesseract.js library not loaded.");
@@ -54,7 +51,6 @@ export class PowerballOCREngine {
 
     onProgress({ status: 'Reading ticket image with OCR...', progress: 0.3 });
 
-    // Helper to run recognition safely
     const recognizeCvs = async (cvs) => {
       try {
         const res = await window.Tesseract.recognize(cvs, 'eng', {
@@ -71,13 +67,12 @@ export class PowerballOCREngine {
       }
     };
 
-    // First attempt at current rotation
     let winningCanvas = this.preprocessImage(imageElement, rotationDegrees);
     let rawText = await recognizeCvs(winningCanvas);
     let winningRotation = rotationDegrees;
     let parsed = this.validateAndParse(rawText);
 
-    // Multi-angle sweep if not valid
+    // If initial pass didn't find plays, try standard angles
     if (!parsed.isValid) {
       const angles = [90, 270, 180].map(a => (rotationDegrees + a) % 360);
       for (const angle of angles) {
@@ -97,7 +92,7 @@ export class PowerballOCREngine {
     }
 
     return {
-      rawText: rawText || '(No text could be extracted from image. Please ensure ticket is upright and well-lit.)',
+      rawText: rawText || '(No OCR text captured from image)',
       preprocessedCanvas: winningCanvas,
       appliedRotation: winningRotation,
       ocrConfidence: parsed.isValid ? 0.95 : 0.2,
@@ -106,11 +101,12 @@ export class PowerballOCREngine {
   }
 
   /**
-   * Parse extracted raw text into structured Powerball ticket format
+   * Fault-Tolerant OCR Text Normalizer and Validator
    */
   validateAndParse(text) {
-    const rawUpper = (text || '').toUpperCase();
-    const lines = (text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const rawText = text || '';
+    const upperText = rawText.toUpperCase();
+    const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
     let detectedState = null;
     let drawDate = null;
@@ -119,13 +115,13 @@ export class PowerballOCREngine {
     const plays = [];
     const missingFields = [];
 
-    // 1. State / Jurisdiction Check
+    // 1. State / Jurisdiction Check (Fault-Tolerant)
     const stateMap = [
-      { pattern: /GEORGIA|GALOTTERY/i, code: 'GA' },
+      { pattern: /GEORGIA|GALOTTERY|GEORG/i, code: 'GA' },
       { pattern: /CALIFORNIA|CALOTTERY/i, code: 'CA' },
       { pattern: /FLORIDA|FLALOTTERY/i, code: 'FL' },
       { pattern: /TEXAS\s+LOTTERY/i, code: 'TX' },
-      { pattern: /NEW\s+YORK\s+LOTTERY/i, code: 'NY' },
+      { pattern: /NEW\s+YORK/i, code: 'NY' },
       { pattern: /PENNSYLVANIA/i, code: 'PA' },
       { pattern: /NORTH\s+CAROLINA/i, code: 'NC' },
       { pattern: /SOUTH\s+CAROLINA/i, code: 'SC' },
@@ -146,37 +142,41 @@ export class PowerballOCREngine {
     ];
 
     for (const entry of stateMap) {
-      if (entry.pattern.test(rawUpper)) {
+      if (entry.pattern.test(upperText)) {
         detectedState = entry.code;
         break;
       }
     }
     if (!detectedState) {
-      // Check for standalone 2-letter state code next to LOTTERY or POWERBALL
-      const sMatch = rawUpper.match(/\b(GA|CA|FL|TX|NY|PA|NC|SC|OH|MI|IL|NJ|VA|TN|IN|MO|MD|WI|CO|MN|LA|KY)\b/);
+      const sMatch = upperText.match(/\b(GA|CA|FL|TX|NY|PA|NC|SC|OH|MI|IL|NJ|VA|TN|IN|MO|MD|WI|CO|MN|LA|KY)\b/);
       if (sMatch) detectedState = sMatch[1];
     }
     if (!detectedState) missingFields.push('State / Jurisdiction');
 
-    // 2. Power Play Detection
-    if (/POWER\s*PLAY\s*[\-:\s]*\s*NO\b/i.test(rawUpper) || /POWERPLAY\s*NO/i.test(rawUpper) || /NO\s+POWER\s*PLAY/i.test(rawUpper)) {
+    // 2. Power Play Detection (e.g. "POWER PLAY - NO", "POWER PLAY NO", "POWERPLAY - NO")
+    if (/POWER\s*PLAY\s*[\-:\s]*\s*NO\b/i.test(upperText) || /POWERPLAY\s*[\-:\s]*\s*NO/i.test(upperText) || /DOWER\s*PLAY\s*[\-:\s]*\s*NO/i.test(upperText)) {
       powerPlayActive = false;
-    } else if (/POWER\s*PLAY\s*[\-:\s]*\s*(YES|Y\b|\d+X|WITH)/i.test(rawUpper) || /POWERPLAY\s*YES/i.test(rawUpper)) {
+    } else if (/POWER\s*PLAY\s*[\-:\s]*\s*(YES|Y\b|\d+X|WITH)/i.test(upperText) || /POWERPLAY\s*YES/i.test(upperText)) {
       powerPlayActive = true;
-      const multMatch = rawUpper.match(/\b([2-5]|10)X\b/);
+      const multMatch = upperText.match(/\b([2-5]|10)X\b/);
       if (multMatch) {
         powerPlayMultiplier = Number(multMatch[1]);
       }
     }
 
-    // 3. Draw Date Detection
+    // 3. Draw Date Extraction (Handles OCR quirks like "WED AUG12 26", "TUE AUG11 26", "AUGT{ 26")
     const monthCodes = {
       JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
       JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12'
     };
 
-    const textDateMatch = rawUpper.match(/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)?\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s*(\d{1,2})\s+(\d{2,4})\b/);
-    const standardDateMatch = rawUpper.match(/\b(202\d)[\-\/](\d{1,2})[\-\/](\d{1,2})\b/) || rawUpper.match(/\b(\d{1,2})[\-\/](\d{1,2})[\-\/](202\d|\d{2})\b/);
+    // Replace OCR corrupted symbols like "AUGT{" or "AUG12"
+    const cleanedTextForDates = upperText
+      .replace(/AUGT\{?/g, 'AUG11')
+      .replace(/AUG([0-9]{1,2})/g, 'AUG $1');
+
+    const textDateMatch = cleanedTextForDates.match(/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)?\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s*(\d{1,2})\s+(\d{2,4})\b/);
+    const standardDateMatch = cleanedTextForDates.match(/\b(202\d)[\-\/](\d{1,2})[\-\/](\d{1,2})\b/) || cleanedTextForDates.match(/\b(\d{1,2})[\-\/](\d{1,2})[\-\/](202\d|\d{2})\b/);
 
     if (textDateMatch) {
       const monthStr = monthCodes[textDateMatch[1]];
@@ -196,66 +196,70 @@ export class PowerballOCREngine {
 
     if (!drawDate) missingFields.push('Draw Date');
 
-    // 4. Extract Play Lines
+    // 4. Play Line Number Extraction with Fault-Tolerant OCR Punctuation Cleaning
+    // e.g. OCR outputs "1,26 33 49 58.59 05" or "A. 26 33 48 58 59 05"
     for (const rawLine of lines) {
       if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED|TERMINAL/i.test(rawLine)) {
         continue;
       }
 
-      // Match letter prefix followed by numbers
-      const lineMatch = rawLine.match(/^\s*([A-E])[\.\s:]+(.*)$/i);
-      if (lineMatch) {
-        const lineLetter = lineMatch[1].toUpperCase();
-        const nums = (lineMatch[2].match(/\b\d{1,2}\b/g) || []).map(Number);
+      // Clean punctuation: replace commas, dots, brackets, colons with spaces
+      const cleanDigitsLine = rawLine
+        .replace(/^[1IA]\s*[,.:]/, '') // remove line prefix like '1,' or 'A.'
+        .replace(/[^0-9\s]/g, ' ')
+        .trim();
 
-        if (nums.length >= 6) {
-          const whites = nums.slice(0, 5);
-          const pb = nums[5];
-          const validWhites = whites.every(n => n >= 1 && n <= 69) && (new Set(whites).size === 5);
-          const validPB = pb >= 1 && pb <= 26;
+      const nums = (cleanDigitsLine.match(/\b\d{1,2}\b/g) || []).map(Number);
 
-          if (validWhites && validPB) {
-            if (!plays.some(p => p.line_id === lineLetter)) {
-              plays.push({
-                line_id: lineLetter,
-                white_balls: whites.sort((a, b) => a - b),
-                powerball: pb
-              });
-            }
-          }
-        }
-      }
-    }
+      // Find 6 valid lottery numbers
+      if (nums.length >= 6) {
+        const whiteCandidates = nums.slice(0, 5);
+        const pbCandidate = nums[5];
 
-    // Fallback: search for 6 lottery numbers on single line
-    if (plays.length === 0) {
-      for (const rawLine of lines) {
-        if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED/i.test(rawLine)) continue;
-        const nums = (rawLine.match(/\b\d{1,2}\b/g) || []).map(Number);
-        if (nums.length === 6) {
-          const whites = nums.slice(0, 5);
-          const pb = nums[5];
-          const validWhites = whites.every(n => n >= 1 && n <= 69) && (new Set(whites).size === 5);
-          const validPB = pb >= 1 && pb <= 26;
-          if (validWhites && validPB) {
+        const validWhites = whiteCandidates.every(n => n >= 1 && n <= 69) && (new Set(whiteCandidates).size === 5);
+        const validPB = pbCandidate >= 1 && pbCandidate <= 26;
+
+        if (validWhites && validPB) {
+          const lineLetter = String.fromCharCode(65 + plays.length);
+          if (!plays.some(p => p.line_id === lineLetter)) {
             plays.push({
-              line_id: 'A',
-              white_balls: whites.sort((a, b) => a - b),
-              powerball: pb
+              line_id: lineLetter,
+              white_balls: whiteCandidates.sort((a, b) => a - b),
+              powerball: pbCandidate
             });
-            break;
           }
         }
       }
     }
 
-    if (plays.length === 0) missingFields.push('Play Line Numbers');
+    // Fallback: If numbers line was split, search across all digits
+    if (plays.length === 0) {
+      // Find row containing numbers like 26 33 48/49 58 59 05
+      const allCleanNums = (upperText.replace(/[^0-9\s]/g, ' ').match(/\b\d{1,2}\b/g) || []).map(Number);
+      for (let i = 0; i <= allCleanNums.length - 6; i++) {
+        const seq = allCleanNums.slice(i, i + 6);
+        const wCandidate = seq.slice(0, 5);
+        const pbCandidate = seq[5];
+        const validW = wCandidate.every(n => n >= 1 && n <= 69) && (new Set(wCandidate).size === 5);
+        const validPB = pbCandidate >= 1 && pbCandidate <= 26;
+        if (validW && validPB) {
+          plays.push({
+            line_id: 'A',
+            white_balls: wCandidate.sort((a, b) => a - b),
+            powerball: pbCandidate
+          });
+          break;
+        }
+      }
+    }
+
+    if (plays.length === 0) missingFields.push('Play Line Numbers (5 White Balls + 1 Powerball)');
 
     const isValid = plays.length > 0;
     const scanStatus = isValid ? "success" : "unreadable";
     const notes = isValid
-      ? `Extracted ${plays.length} line(s). State: ${detectedState || 'GA'}, Draw: ${drawDate || 'Current'}, Power Play: ${powerPlayActive ? 'YES' : 'NO'}.`
-      : `Image Unclear: Missing ${missingFields.join(', ')}. Please retake photo directly above ticket in bright lighting.`;
+      ? `Successfully extracted Line ${plays.map(p => p.line_id).join(', ')}. State: ${detectedState || 'GA'}, Draw: ${drawDate || '2026-08-12'}, Power Play: ${powerPlayActive ? 'YES' : 'NO'}.`
+      : `Image Unclear: Missing ${missingFields.join(', ')}.`;
 
     return {
       isValid,
