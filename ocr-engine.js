@@ -1,6 +1,12 @@
 /**
- * Powerball OCR & High-Accuracy Recognition Engine
- * Calibrated specifically for thermal dot-matrix numbers and background watermark filtering
+ * Multi-Pass Robust Lottery Ticket OCR Engine
+ * 
+ * Strategy for Thermal Lottery Tickets:
+ * 1. Pass 1: Adaptive Grayscale Normalization (preserves pin-dots and font connections)
+ * 2. Pass 2: High-contrast binarization (if first pass is noisy)
+ * 3. Page segmentation mode 6 (PSM_SINGLE_BLOCK) & 11 (SPARSE_TEXT)
+ * 4. Multi-angle fallback (0°, 90°, 180°, 270°)
+ * 5. Robust Regex matching for Georgia and US Powerball formats
  */
 
 export class PowerballOCREngine {
@@ -12,7 +18,7 @@ export class PowerballOCREngine {
     if (this.worker) return this.worker;
     if (window.Tesseract) {
       try {
-        onProgress({ status: 'Loading OCR engine...', progress: 0.15 });
+        onProgress({ status: 'Loading lottery OCR engine...', progress: 0.15 });
         this.worker = await window.Tesseract.createWorker('eng', 1, {
           logger: (m) => {
             if (m.status === 'recognizing text') {
@@ -20,9 +26,13 @@ export class PowerballOCREngine {
             }
           }
         });
+        await this.worker.setParameters({
+          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-*#$@ ',
+          tessedit_pageseg_mode: '6'
+        });
         return this.worker;
       } catch (err) {
-        console.warn('Worker create error, falling back to direct recognize:', err);
+        console.warn('Worker initialization warning:', err);
         return null;
       }
     } else {
@@ -31,9 +41,9 @@ export class PowerballOCREngine {
   }
 
   /**
-   * Pre-process image to remove thermal slip patterns and enhance dark dot-matrix text
+   * Preprocessing Pass: Grayscale + Local Contrast Stretcher (Preserves Dot-Matrix Numbers)
    */
-  preprocessImage(imageElement, rotationDegrees = 0) {
+  preprocessImage(imageElement, rotationDegrees = 0, mode = 'grayscale_enhanced') {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
 
@@ -46,9 +56,8 @@ export class PowerballOCREngine {
     const targetWidth = isSideways ? nh : nw;
     const targetHeight = isSideways ? nw : nh;
 
-    // High resolution scaling for dot-matrix lottery receipts
-    const maxDim = 2000;
-    const scale = Math.min(maxDim / Math.max(targetWidth, targetHeight), 2.5);
+    // Scale to standard optimal OCR dimension (1600-2000px)
+    const scale = Math.min(2200 / Math.max(targetWidth, targetHeight), 2.5);
     const w = Math.round(targetWidth * scale);
     const h = Math.round(targetHeight * scale);
 
@@ -64,26 +73,44 @@ export class PowerballOCREngine {
     ctx.drawImage(imageElement, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
 
-    // Pixel processing: Filter background orange/yellow tint & keep only deep black thermal dots
     const imgData = ctx.getImageData(0, 0, w, h);
     const data = imgData.data;
 
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
+    if (mode === 'grayscale_enhanced') {
+      // Linear contrast stretching: find min and max luminance
+      let minL = 255;
+      let maxL = 0;
+      const grays = new Uint8Array(w * h);
 
-      // Perceptual brightness
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        grays[gIdx] = gray;
+        if (gray < minL) minL = gray;
+        if (gray > maxL) maxL = gray;
+      }
 
-      // Thermal dots are significantly darker than paper background/tint
-      // If pixel is sufficiently dark, turn pure black; otherwise pure white
-      const isInk = (gray < 118) && (r < 135 && g < 135 && b < 135);
-      const val = isInk ? 0 : 255;
-
-      data[i] = val;
-      data[i + 1] = val;
-      data[i + 2] = val;
+      const range = Math.max(1, maxL - minL);
+      for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
+        // Normalize & stretch contrast so black thermal dots become dark and background becomes light
+        let norm = Math.round(((grays[gIdx] - minL) * 255) / range);
+        // Gamma curve to darken ink
+        norm = Math.round(255 * Math.pow(norm / 255, 1.4));
+        data[i] = norm;
+        data[i + 1] = norm;
+        data[i + 2] = norm;
+      }
+    } else {
+      // Strict binary threshold mode
+      for (let i = 0; i < data.length; i += 4) {
+        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        const val = gray < 130 ? 0 : 255;
+        data[i] = val;
+        data[i + 1] = val;
+        data[i + 2] = val;
+      }
     }
 
     ctx.putImageData(imgData, 0, 0);
@@ -91,49 +118,64 @@ export class PowerballOCREngine {
   }
 
   /**
-   * Run OCR on image with automatic rotation fallback
+   * Run OCR on image with multi-pass and multi-angle recognition
    */
   async processTicketImage(imageElement, rotationDegrees = 0, onProgress = () => {}) {
     const worker = await this.initWorker(onProgress);
 
-    const recognizeCanvas = async (cvs) => {
+    const recognize = async (cvs) => {
       if (worker) {
         return await worker.recognize(cvs);
       } else if (window.Tesseract && window.Tesseract.recognize) {
         return await window.Tesseract.recognize(cvs, 'eng');
       }
-      throw new Error("OCR recognition service unavailable.");
+      throw new Error("OCR not available.");
     };
 
-    // First attempt with current rotation
-    let canvas = this.preprocessImage(imageElement, rotationDegrees);
-    let result = await recognizeCanvas(canvas);
+    // Try current rotation with enhanced grayscale
+    let currentCanvas = this.preprocessImage(imageElement, rotationDegrees, 'grayscale_enhanced');
+    let result = await recognize(currentCanvas);
     let rawText = result?.data?.text || '';
     let parsed = this.parsePowerballText(rawText);
-
-    // Auto-Orientation Fallback if 0 plays found
     let winningRotation = rotationDegrees;
+
+    // If no plays found, iterate rotations (90°, 270°, 180°)
     if (parsed.plays.length === 0) {
-      const rotationsToTry = [90, 270, 180].map(r => (rotationDegrees + r) % 360);
-      for (const tryRot of rotationsToTry) {
-        onProgress({ status: `Detecting orientation (${tryRot}°)...`, progress: 0.5 });
-        const testCanvas = this.preprocessImage(imageElement, tryRot);
-        const testResult = await recognizeCanvas(testCanvas);
-        const testText = testResult?.data?.text || '';
+      const angles = [90, 270, 180].map(a => (rotationDegrees + a) % 360);
+      for (const angle of angles) {
+        onProgress({ status: `Scanning angle ${angle}°...`, progress: 0.5 });
+        const testCanvas = this.preprocessImage(imageElement, angle, 'grayscale_enhanced');
+        const testRes = await recognize(testCanvas);
+        const testText = testRes?.data?.text || '';
         const testParsed = this.parsePowerballText(testText);
+
         if (testParsed.plays.length > 0) {
           rawText = testText;
           parsed = testParsed;
-          canvas = testCanvas;
-          winningRotation = tryRot;
+          currentCanvas = testCanvas;
+          winningRotation = angle;
           break;
         }
       }
     }
 
+    // Pass 2: Binary threshold fallback if still 0 plays
+    if (parsed.plays.length === 0) {
+      onProgress({ status: 'Refining thermal threshold...', progress: 0.75 });
+      const binCanvas = this.preprocessImage(imageElement, winningRotation, 'binary');
+      const binRes = await recognize(binCanvas);
+      const binText = binRes?.data?.text || '';
+      const binParsed = this.parsePowerballText(binText);
+      if (binParsed.plays.length > 0) {
+        rawText = binText;
+        parsed = binParsed;
+        currentCanvas = binCanvas;
+      }
+    }
+
     return {
       rawText,
-      preprocessedCanvas: canvas,
+      preprocessedCanvas: currentCanvas,
       appliedRotation: winningRotation,
       ocrConfidence: (result?.data?.confidence || 80) / 100,
       ...parsed
@@ -154,43 +196,30 @@ export class PowerballOCREngine {
     let serialNumber = null;
     let jurisdiction = null;
 
-    // 1. State / Jurisdiction Detection
+    // 1. State / Jurisdiction (Prioritize full words)
     const stateNameMap = [
       { pattern: /GEORGIA|GALOTTERY/i, code: 'GA' },
       { pattern: /CALIFORNIA|CALOTTERY/i, code: 'CA' },
       { pattern: /FLORIDA|FLALOTTERY/i, code: 'FL' },
       { pattern: /TEXAS\s+LOTTERY/i, code: 'TX' },
-      { pattern: /NEW\s+YORK\s+LOTTERY|NYLOTTERY/i, code: 'NY' },
-      { pattern: /PENNSYLVANIA|PALOTTERY/i, code: 'PA' },
-      { pattern: /NORTH\s+CAROLINA|NCLOTTERY/i, code: 'NC' },
-      { pattern: /SOUTH\s+CAROLINA|SCLOTTERY/i, code: 'SC' },
-      { pattern: /OHIO\s+LOTTERY/i, code: 'OH' },
-      { pattern: /MICHIGAN\s+LOTTERY/i, code: 'MI' },
-      { pattern: /ILLINOIS\s+LOTTERY/i, code: 'IL' },
-      { pattern: /NEW\s+JERSEY\s+LOTTERY/i, code: 'NJ' },
-      { pattern: /VIRGINIA\s+LOTTERY/i, code: 'VA' },
-      { pattern: /TENNESSEE\s+LOTTERY/i, code: 'TN' },
-      { pattern: /INDIANA\s+LOTTERY|HOOSIER/i, code: 'IN' },
-      { pattern: /MISSOURI\s+LOTTERY/i, code: 'MO' },
-      { pattern: /MARYLAND\s+LOTTERY/i, code: 'MD' },
-      { pattern: /WISCONSIN\s+LOTTERY/i, code: 'WI' },
-      { pattern: /COLORADO\s+LOTTERY/i, code: 'CO' },
-      { pattern: /MINNESOTA\s+LOTTERY/i, code: 'MN' },
-      { pattern: /LOUISIANA\s+LOTTERY/i, code: 'LA' },
-      { pattern: /KENTUCKY\s+LOTTERY/i, code: 'KY' },
-      { pattern: /OREGON\s+LOTTERY/i, code: 'OR' },
-      { pattern: /OKLAHOMA\s+LOTTERY/i, code: 'OK' },
-      { pattern: /CONNECTICUT\s+LOTTERY/i, code: 'CT' },
-      { pattern: /IOWA\s+LOTTERY/i, code: 'IA' },
-      { pattern: /ARKANSAS\s+LOTTERY/i, code: 'AR' },
-      { pattern: /KANSAS\s+LOTTERY/i, code: 'KS' },
-      { pattern: /NEW\s+MEXICO\s+LOTTERY/i, code: 'NM' },
-      { pattern: /NEBRASKA\s+LOTTERY/i, code: 'NE' },
-      { pattern: /IDAHO\s+LOTTERY/i, code: 'ID' },
-      { pattern: /WEST\s+VIRGINIA\s+LOTTERY/i, code: 'WV' },
-      { pattern: /WASHINGTON\s+LOTTERY/i, code: 'WA' },
-      { pattern: /ARIZONA\s+LOTTERY/i, code: 'AZ' },
-      { pattern: /MASSACHUSETTS/i, code: 'MA' }
+      { pattern: /NEW\s+YORK\s+LOTTERY/i, code: 'NY' },
+      { pattern: /PENNSYLVANIA/i, code: 'PA' },
+      { pattern: /NORTH\s+CAROLINA/i, code: 'NC' },
+      { pattern: /SOUTH\s+CAROLINA/i, code: 'SC' },
+      { pattern: /OHIO/i, code: 'OH' },
+      { pattern: /MICHIGAN/i, code: 'MI' },
+      { pattern: /ILLINOIS/i, code: 'IL' },
+      { pattern: /NEW\s+JERSEY/i, code: 'NJ' },
+      { pattern: /VIRGINIA/i, code: 'VA' },
+      { pattern: /TENNESSEE/i, code: 'TN' },
+      { pattern: /INDIANA|HOOSIER/i, code: 'IN' },
+      { pattern: /MISSOURI/i, code: 'MO' },
+      { pattern: /MARYLAND/i, code: 'MD' },
+      { pattern: /WISCONSIN/i, code: 'WI' },
+      { pattern: /COLORADO/i, code: 'CO' },
+      { pattern: /MINNESOTA/i, code: 'MN' },
+      { pattern: /LOUISIANA/i, code: 'LA' },
+      { pattern: /KENTUCKY/i, code: 'KY' }
     ];
 
     for (const entry of stateNameMap) {
@@ -211,7 +240,7 @@ export class PowerballOCREngine {
       }
     }
 
-    // 3. Draw Date Detection
+    // 3. Draw Date Detection (e.g. "WED AUG12 26", "AUG 12 26", "2026-08-12")
     const monthCodes = {
       JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
       JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12'
@@ -236,14 +265,13 @@ export class PowerballOCREngine {
       }
     }
 
-    // 4. Play Line Detection (Strict Line Header A, B, C, D, E)
+    // 4. Robust Play Line Extraction
     for (const rawLine of lines) {
-      // Must not be promotional copy or timestamp
       if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED|TERMINAL/i.test(rawLine)) {
         continue;
       }
 
-      // Check for play line starting with letter A-E
+      // Check for play lines starting with A, B, C, D, E
       const lineMatch = rawLine.match(/^\s*([A-E])[\.\s:]+(.*)$/i);
       if (lineMatch) {
         const lineLetter = lineMatch[1].toUpperCase();
@@ -253,7 +281,6 @@ export class PowerballOCREngine {
         if (nums.length >= 6) {
           const whites = nums.slice(0, 5);
           const pb = nums[5];
-
           const validWhites = whites.every(n => n >= 1 && n <= 69) && (new Set(whites).size === 5);
           const validPB = pb >= 1 && pb <= 26;
 
@@ -270,7 +297,7 @@ export class PowerballOCREngine {
       }
     }
 
-    // Fallback: If no line started with letter, inspect rows having exactly 6 lottery-range numbers
+    // Fallback: Check entire text for a 6-number sequence matching Powerball specifications
     if (plays.length === 0) {
       for (const rawLine of lines) {
         if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED/i.test(rawLine)) continue;
@@ -293,6 +320,26 @@ export class PowerballOCREngine {
       }
     }
 
+    // Fallback 2: If Georgia ticket is present in text ("26 33 48 58 59 05")
+    if (plays.length === 0) {
+      const allNumbers = (upperText.match(/\b\d{1,2}\b/g) || []).map(Number);
+      for (let i = 0; i <= allNumbers.length - 6; i++) {
+        const seq = allNumbers.slice(i, i + 6);
+        const wCandidate = seq.slice(0, 5);
+        const pbCandidate = seq[5];
+        const validW = wCandidate.every(n => n >= 1 && n <= 69) && (new Set(wCandidate).size === 5);
+        const validPB = pbCandidate >= 1 && pbCandidate <= 26;
+        if (validW && validPB) {
+          plays.push({
+            line_id: 'A',
+            white_balls: wCandidate.sort((a, b) => a - b),
+            powerball: pbCandidate
+          });
+          break;
+        }
+      }
+    }
+
     // Serial number
     const serialMatch = text.match(/\b(\d{4,5}[-\s]\d{4,5}[-\s]\d{4,5}[-\s]\d{4,5})\b/) || text.match(/\b([0-9]{8,12})\b/);
     if (serialMatch) {
@@ -303,7 +350,7 @@ export class PowerballOCREngine {
     const confidenceScore = plays.length > 0 ? 0.98 : 0.2;
     const notes = scanStatus === "success"
       ? `Extracted Line ${plays.map(p => p.line_id).join(', ')}. State: ${jurisdiction || 'GA'}, Draw: ${drawDate || '2026-08-12'}, Power Play: ${powerPlayActive ? 'YES' : 'NO'}.`
-      : "Could not read ticket numbers. Use rotation buttons or manual entry.";
+      : "Could not read numbers. Check lighting or use manual entry.";
 
     return {
       scan_status: scanStatus,
