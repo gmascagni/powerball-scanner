@@ -372,12 +372,15 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  width: 100%;
 }
 
 .camera-viewport {
   position: relative;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 60vh;
+  min-height: 380px;
+  max-height: 520px;
   background: #000;
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -392,12 +395,12 @@ body {
 
 .ticket-viewfinder-overlay {
   position: absolute;
-  top: 8%;
-  left: 10%;
-  right: 10%;
-  bottom: 8%;
-  border: 1px dashed rgba(255, 255, 255, 0.4);
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  top: 6%;
+  left: 6%;
+  right: 6%;
+  bottom: 6%;
+  border: 1px dashed rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
   pointer-events: none;
   border-radius: var(--radius-sm);
   display: flex;
