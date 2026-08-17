@@ -18,25 +18,24 @@ export class PowerballOCREngine {
     if (this.worker) return this.worker;
     if (window.Tesseract) {
       try {
-        onProgress({ status: 'Loading lottery OCR engine...', progress: 0.15 });
+        onProgress({ status: 'Loading OCR engine...', progress: 0.15 });
+        // Tesseract v5 createWorker standard invocation
         this.worker = await window.Tesseract.createWorker('eng', 1, {
+          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+          corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/tesseract-core.wasm.js',
           logger: (m) => {
             if (m.status === 'recognizing text') {
-              onProgress({ status: 'Recognizing ticket digits & text...', progress: m.progress });
+              onProgress({ status: 'Reading ticket digits & numbers...', progress: m.progress });
             }
           }
         });
-        await this.worker.setParameters({
-          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-*#$@ ',
-          tessedit_pageseg_mode: '6'
-        });
         return this.worker;
       } catch (err) {
-        console.warn('Worker initialization warning:', err);
+        console.warn('Worker initialization fallback to Tesseract.recognize:', err);
         return null;
       }
     } else {
-      throw new Error("Tesseract.js not loaded.");
+      throw new Error("Tesseract.js library not found on page.");
     }
   }
 
