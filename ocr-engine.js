@@ -1,12 +1,16 @@
 /**
- * Multi-Pass Robust Lottery Ticket OCR Engine
+ * Powerball OCR & Strict Validation Engine
  * 
- * Strategy for Thermal Lottery Tickets:
- * 1. Pass 1: Adaptive Grayscale Normalization (preserves pin-dots and font connections)
- * 2. Pass 2: High-contrast binarization (if first pass is noisy)
- * 3. Page segmentation mode 6 (PSM_SINGLE_BLOCK) & 11 (SPARSE_TEXT)
- * 4. Multi-angle fallback (0°, 90°, 180°, 270°)
- * 5. Robust Regex matching for Georgia and US Powerball formats
+ * Mandatory Field Requirements for Valid Powerball Tickets:
+ * 1. Game Identification: Must contain "POWERBALL" or "POWER"
+ * 2. Jurisdiction / State: Must identify a valid lottery state (e.g. GA, CA, FL, NY, TX, etc.)
+ * 3. Draw Date: Must detect valid scheduled drawing date (YYYY-MM-DD)
+ * 4. Legible Play Lines: Each line MUST contain exactly 5 distinct White Balls (1–69) and exactly 1 Powerball (1–26).
+ * 
+ * If ANY mandatory field is missing, ambiguous, or fails range checks:
+ * -> Scan Status = "unreadable" or "low_quality"
+ * -> Clear Error Banner with instruction: "Image unclear or unreadable. Please retake photo with better lighting and flat focus."
+ * -> NEVER populate hallucinated / phantom lines.
  */
 
 export class PowerballOCREngine {
@@ -18,31 +22,27 @@ export class PowerballOCREngine {
     if (this.worker) return this.worker;
     if (window.Tesseract) {
       try {
-        onProgress({ status: 'Loading OCR engine...', progress: 0.15 });
-        // Tesseract v5 createWorker standard invocation
+        onProgress({ status: 'Initializing OCR Engine...', progress: 0.15 });
         this.worker = await window.Tesseract.createWorker('eng', 1, {
           workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
           corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/tesseract-core.wasm.js',
           logger: (m) => {
             if (m.status === 'recognizing text') {
-              onProgress({ status: 'Reading ticket digits & numbers...', progress: m.progress });
+              onProgress({ status: 'Reading ticket digits & text...', progress: m.progress });
             }
           }
         });
         return this.worker;
       } catch (err) {
-        console.warn('Worker initialization fallback to Tesseract.recognize:', err);
+        console.warn('Worker init warning:', err);
         return null;
       }
     } else {
-      throw new Error("Tesseract.js library not found on page.");
+      throw new Error("Tesseract library not found.");
     }
   }
 
-  /**
-   * Preprocessing Pass: Grayscale + Local Contrast Stretcher (Preserves Dot-Matrix Numbers)
-   */
-  preprocessImage(imageElement, rotationDegrees = 0, mode = 'grayscale_enhanced') {
+  preprocessImage(imageElement, rotationDegrees = 0) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
 
@@ -55,7 +55,7 @@ export class PowerballOCREngine {
     const targetWidth = isSideways ? nh : nw;
     const targetHeight = isSideways ? nw : nh;
 
-    // Scale to standard optimal OCR dimension (1600-2000px)
+    // Scale up for high-precision OCR
     const scale = Math.min(2200 / Math.max(targetWidth, targetHeight), 2.5);
     const w = Math.round(targetWidth * scale);
     const h = Math.round(targetHeight * scale);
@@ -72,53 +72,35 @@ export class PowerballOCREngine {
     ctx.drawImage(imageElement, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
 
+    // High dynamic range contrast stretching
     const imgData = ctx.getImageData(0, 0, w, h);
     const data = imgData.data;
 
-    if (mode === 'grayscale_enhanced') {
-      // Linear contrast stretching: find min and max luminance
-      let minL = 255;
-      let maxL = 0;
-      const grays = new Uint8Array(w * h);
+    let minL = 255;
+    let maxL = 0;
+    const grays = new Uint8Array(w * h);
 
-      for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-        grays[gIdx] = gray;
-        if (gray < minL) minL = gray;
-        if (gray > maxL) maxL = gray;
-      }
+    for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
+      const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      grays[gIdx] = gray;
+      if (gray < minL) minL = gray;
+      if (gray > maxL) maxL = gray;
+    }
 
-      const range = Math.max(1, maxL - minL);
-      for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
-        // Normalize & stretch contrast so black thermal dots become dark and background becomes light
-        let norm = Math.round(((grays[gIdx] - minL) * 255) / range);
-        // Gamma curve to darken ink
-        norm = Math.round(255 * Math.pow(norm / 255, 1.4));
-        data[i] = norm;
-        data[i + 1] = norm;
-        data[i + 2] = norm;
-      }
-    } else {
-      // Strict binary threshold mode
-      for (let i = 0; i < data.length; i += 4) {
-        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        const val = gray < 130 ? 0 : 255;
-        data[i] = val;
-        data[i + 1] = val;
-        data[i + 2] = val;
-      }
+    const range = Math.max(1, maxL - minL);
+    for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
+      let norm = Math.round(((grays[gIdx] - minL) * 255) / range);
+      // Darken text dots
+      norm = Math.round(255 * Math.pow(norm / 255, 1.4));
+      data[i] = norm;
+      data[i + 1] = norm;
+      data[i + 2] = norm;
     }
 
     ctx.putImageData(imgData, 0, 0);
     return canvas;
   }
 
-  /**
-   * Run OCR on image with multi-pass and multi-angle recognition
-   */
   async processTicketImage(imageElement, rotationDegrees = 0, onProgress = () => {}) {
     const worker = await this.initWorker(onProgress);
 
@@ -128,75 +110,63 @@ export class PowerballOCREngine {
       } else if (window.Tesseract && window.Tesseract.recognize) {
         return await window.Tesseract.recognize(cvs, 'eng');
       }
-      throw new Error("OCR not available.");
+      throw new Error("OCR service unavailable.");
     };
 
-    // Try current rotation with enhanced grayscale
-    let currentCanvas = this.preprocessImage(imageElement, rotationDegrees, 'grayscale_enhanced');
-    let result = await recognize(currentCanvas);
+    let winningCanvas = this.preprocessImage(imageElement, rotationDegrees);
+    let result = await recognize(winningCanvas);
     let rawText = result?.data?.text || '';
-    let parsed = this.parsePowerballText(rawText);
     let winningRotation = rotationDegrees;
+    let validation = this.validateAndParse(rawText);
 
-    // If no plays found, iterate rotations (90°, 270°, 180°)
-    if (parsed.plays.length === 0) {
+    // Multi-angle sweep if not valid
+    if (!validation.isValid) {
       const angles = [90, 270, 180].map(a => (rotationDegrees + a) % 360);
       for (const angle of angles) {
         onProgress({ status: `Scanning angle ${angle}°...`, progress: 0.5 });
-        const testCanvas = this.preprocessImage(imageElement, angle, 'grayscale_enhanced');
+        const testCanvas = this.preprocessImage(imageElement, angle);
         const testRes = await recognize(testCanvas);
         const testText = testRes?.data?.text || '';
-        const testParsed = this.parsePowerballText(testText);
+        const testVal = this.validateAndParse(testText);
 
-        if (testParsed.plays.length > 0) {
+        if (testVal.isValid) {
           rawText = testText;
-          parsed = testParsed;
-          currentCanvas = testCanvas;
+          validation = testVal;
+          winningCanvas = testCanvas;
           winningRotation = angle;
           break;
         }
       }
     }
 
-    // Pass 2: Binary threshold fallback if still 0 plays
-    if (parsed.plays.length === 0) {
-      onProgress({ status: 'Refining thermal threshold...', progress: 0.75 });
-      const binCanvas = this.preprocessImage(imageElement, winningRotation, 'binary');
-      const binRes = await recognize(binCanvas);
-      const binText = binRes?.data?.text || '';
-      const binParsed = this.parsePowerballText(binText);
-      if (binParsed.plays.length > 0) {
-        rawText = binText;
-        parsed = binParsed;
-        currentCanvas = binCanvas;
-      }
-    }
-
     return {
-      rawText,
-      preprocessedCanvas: currentCanvas,
+      rawText: rawText || '(No OCR text recognized from image)',
+      preprocessedCanvas: winningCanvas,
       appliedRotation: winningRotation,
-      ocrConfidence: (result?.data?.confidence || 80) / 100,
-      ...parsed
+      ocrConfidence: validation.isValid ? 0.95 : 0.2,
+      ...validation
     };
   }
 
   /**
-   * Parse extracted raw text into structured Powerball ticket format
+   * Mandatory Field Validation & Strict Parsing
    */
-  parsePowerballText(text) {
-    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const upperText = text.toUpperCase();
+  validateAndParse(text) {
+    const upperText = (text || '').toUpperCase();
+    const lines = (text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-    let plays = [];
-    let drawDate = null;
-    let powerPlayActive = false;
-    let powerPlayMultiplier = null;
-    let serialNumber = null;
-    let jurisdiction = null;
+    const missingFields = [];
+    const validationErrors = [];
 
-    // 1. State / Jurisdiction (Prioritize full words)
-    const stateNameMap = [
+    // 1. Mandatory Game Check
+    const hasGame = /POWER\s*BALL|POWERBALL/i.test(upperText);
+    if (!hasGame) {
+      missingFields.push('Powerball Game Title');
+    }
+
+    // 2. Mandatory State Check
+    let detectedState = null;
+    const stateMap = [
       { pattern: /GEORGIA|GALOTTERY/i, code: 'GA' },
       { pattern: /CALIFORNIA|CALOTTERY/i, code: 'CA' },
       { pattern: /FLORIDA|FLALOTTERY/i, code: 'FL' },
@@ -218,28 +188,35 @@ export class PowerballOCREngine {
       { pattern: /COLORADO/i, code: 'CO' },
       { pattern: /MINNESOTA/i, code: 'MN' },
       { pattern: /LOUISIANA/i, code: 'LA' },
-      { pattern: /KENTUCKY/i, code: 'KY' }
+      { pattern: /KENTUCKY/i, code: 'KY' },
+      { pattern: /OREGON/i, code: 'OR' },
+      { pattern: /OKLAHOMA/i, code: 'OK' },
+      { pattern: /CONNECTICUT/i, code: 'CT' },
+      { pattern: /IOWA/i, code: 'IA' },
+      { pattern: /ARKANSAS/i, code: 'AR' },
+      { pattern: /KANSAS/i, code: 'KS' },
+      { pattern: /NEW\s+MEXICO/i, code: 'NM' },
+      { pattern: /NEBRASKA/i, code: 'NE' },
+      { pattern: /IDAHO/i, code: 'ID' },
+      { pattern: /WEST\s+VIRGINIA/i, code: 'WV' },
+      { pattern: /WASHINGTON/i, code: 'WA' },
+      { pattern: /ARIZONA/i, code: 'AZ' },
+      { pattern: /MASSACHUSETTS/i, code: 'MA' }
     ];
 
-    for (const entry of stateNameMap) {
+    for (const entry of stateMap) {
       if (entry.pattern.test(upperText)) {
-        jurisdiction = entry.code;
+        detectedState = entry.code;
         break;
       }
     }
 
-    // 2. Power Play Detection
-    if (/POWER\s*PLAY\s*[\-:\s]*\s*NO\b/i.test(upperText) || /POWERPLAY\s*NO/i.test(upperText) || /NO\s+POWER\s*PLAY/i.test(upperText)) {
-      powerPlayActive = false;
-    } else if (/POWER\s*PLAY\s*[\-:\s]*\s*(YES|Y\b|\d+X|WITH)/i.test(upperText) || /POWERPLAY\s*YES/i.test(upperText)) {
-      powerPlayActive = true;
-      const multMatch = upperText.match(/\b([2-5]|10)X\b/);
-      if (multMatch) {
-        powerPlayMultiplier = Number(multMatch[1]);
-      }
+    if (!detectedState) {
+      missingFields.push('State / Jurisdiction');
     }
 
-    // 3. Draw Date Detection (e.g. "WED AUG12 26", "AUG 12 26", "2026-08-12")
+    // 3. Mandatory Draw Date Check
+    let drawDate = null;
     const monthCodes = {
       JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
       JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12'
@@ -264,28 +241,49 @@ export class PowerballOCREngine {
       }
     }
 
-    // 4. Robust Play Line Extraction
+    if (!drawDate) {
+      missingFields.push('Draw Date');
+    }
+
+    // 4. Power Play Option
+    let powerPlayActive = false;
+    let powerPlayMultiplier = null;
+
+    if (/POWER\s*PLAY\s*[\-:\s]*\s*NO\b/i.test(upperText) || /POWERPLAY\s*NO/i.test(upperText) || /NO\s+POWER\s*PLAY/i.test(upperText)) {
+      powerPlayActive = false;
+    } else if (/POWER\s*PLAY\s*[\-:\s]*\s*(YES|Y\b|\d+X|WITH)/i.test(upperText) || /POWERPLAY\s*YES/i.test(upperText)) {
+      powerPlayActive = true;
+      const multMatch = upperText.match(/\b([2-5]|10)X\b/);
+      if (multMatch) {
+        powerPlayMultiplier = Number(multMatch[1]);
+      }
+    }
+
+    // 5. Strict Play Line Extraction (NO PHANTOM LINES ALLOWED)
+    const validPlays = [];
+
     for (const rawLine of lines) {
+      // Exclude promotional ads & terminal stamps
       if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED|TERMINAL/i.test(rawLine)) {
         continue;
       }
 
-      // Check for play lines starting with A, B, C, D, E
+      // Format 1: Explicit Line prefix A-E followed by numbers
       const lineMatch = rawLine.match(/^\s*([A-E])[\.\s:]+(.*)$/i);
       if (lineMatch) {
         const lineLetter = lineMatch[1].toUpperCase();
-        const restOfLine = lineMatch[2];
-        const nums = (restOfLine.match(/\b\d{1,2}\b/g) || []).map(Number);
+        const nums = (lineMatch[2].match(/\b\d{1,2}\b/g) || []).map(Number);
 
         if (nums.length >= 6) {
           const whites = nums.slice(0, 5);
           const pb = nums[5];
+
           const validWhites = whites.every(n => n >= 1 && n <= 69) && (new Set(whites).size === 5);
           const validPB = pb >= 1 && pb <= 26;
 
           if (validWhites && validPB) {
-            if (!plays.some(p => p.line_id === lineLetter)) {
-              plays.push({
+            if (!validPlays.some(p => p.line_id === lineLetter)) {
+              validPlays.push({
                 line_id: lineLetter,
                 white_balls: whites.sort((a, b) => a - b),
                 powerball: pb
@@ -296,20 +294,19 @@ export class PowerballOCREngine {
       }
     }
 
-    // Fallback: Check entire text for a 6-number sequence matching Powerball specifications
-    if (plays.length === 0) {
+    // Fallback: Check for exact 6 lottery numbers sequence on an isolated line
+    if (validPlays.length === 0) {
       for (const rawLine of lines) {
         if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED/i.test(rawLine)) continue;
         const nums = (rawLine.match(/\b\d{1,2}\b/g) || []).map(Number);
-        if (nums.length >= 6) {
+        if (nums.length === 6) {
           const whites = nums.slice(0, 5);
           const pb = nums[5];
           const validWhites = whites.every(n => n >= 1 && n <= 69) && (new Set(whites).size === 5);
           const validPB = pb >= 1 && pb <= 26;
           if (validWhites && validPB) {
-            const lineLetter = String.fromCharCode(65 + plays.length);
-            plays.push({
-              line_id: lineLetter,
+            validPlays.push({
+              line_id: 'A',
               white_balls: whites.sort((a, b) => a - b),
               powerball: pb
             });
@@ -319,48 +316,31 @@ export class PowerballOCREngine {
       }
     }
 
-    // Fallback 2: If Georgia ticket is present in text ("26 33 48 58 59 05")
-    if (plays.length === 0) {
-      const allNumbers = (upperText.match(/\b\d{1,2}\b/g) || []).map(Number);
-      for (let i = 0; i <= allNumbers.length - 6; i++) {
-        const seq = allNumbers.slice(i, i + 6);
-        const wCandidate = seq.slice(0, 5);
-        const pbCandidate = seq[5];
-        const validW = wCandidate.every(n => n >= 1 && n <= 69) && (new Set(wCandidate).size === 5);
-        const validPB = pbCandidate >= 1 && pbCandidate <= 26;
-        if (validW && validPB) {
-          plays.push({
-            line_id: 'A',
-            white_balls: wCandidate.sort((a, b) => a - b),
-            powerball: pbCandidate
-          });
-          break;
-        }
-      }
+    if (validPlays.length === 0) {
+      missingFields.push('Play Line Numbers (5 White Balls 1-69 + 1 Powerball 1-26)');
     }
 
-    // Serial number
-    const serialMatch = text.match(/\b(\d{4,5}[-\s]\d{4,5}[-\s]\d{4,5}[-\s]\d{4,5})\b/) || text.match(/\b([0-9]{8,12})\b/);
-    if (serialMatch) {
-      serialNumber = serialMatch[1];
-    }
+    // Determine Validation Status
+    const isValid = missingFields.length === 0 && validPlays.length > 0;
+    let scanStatus = isValid ? "success" : "unreadable";
 
-    const scanStatus = plays.length > 0 ? "success" : "unreadable";
-    const confidenceScore = plays.length > 0 ? 0.98 : 0.2;
-    const notes = scanStatus === "success"
-      ? `Extracted Line ${plays.map(p => p.line_id).join(', ')}. State: ${jurisdiction || 'GA'}, Draw: ${drawDate || '2026-08-12'}, Power Play: ${powerPlayActive ? 'YES' : 'NO'}.`
-      : "Could not read numbers. Check lighting or use manual entry.";
+    let notes = "";
+    if (isValid) {
+      notes = `Successfully verified Powerball ticket. Extracted ${validPlays.length} valid line(s). State: ${detectedState}, Draw: ${drawDate}, Power Play: ${powerPlayActive ? 'YES' : 'NO'}.`;
+    } else {
+      notes = `Image Unclear or Missing Mandatory Fields: ${missingFields.join(', ')}. Please retake photo with clear flat focus and bright lighting.`;
+    }
 
     return {
+      isValid,
+      missingFields,
       scan_status: scanStatus,
-      confidence_score: confidenceScore,
       ticket_data: {
-        draw_date: drawDate || "2026-08-12",
+        draw_date: drawDate || "",
         power_play_active: powerPlayActive,
         power_play_multiplier: powerPlayMultiplier,
-        plays: plays,
-        state: jurisdiction || "GA",
-        serial_number: serialNumber
+        plays: validPlays,
+        state: detectedState || ""
       },
       notes
     };

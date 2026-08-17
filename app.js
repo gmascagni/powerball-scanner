@@ -432,7 +432,7 @@ class PowerballScannerApp {
         this.ocrProgressContainer.style.display = 'none';
       }, 800);
 
-      // Populate ticket data
+      // Populate ticket data only if verified
       this.currentTicket = {
         draw_date: result.ticket_data.draw_date || this.currentTicket.draw_date,
         power_play_active: Boolean(result.ticket_data.power_play_active),
@@ -441,8 +441,21 @@ class PowerballScannerApp {
       };
 
       this.scanStatus = result.scan_status;
-      this.confidenceScore = result.confidence_score;
+      this.confidenceScore = result.ocrConfidence;
       this.scanNotes = result.notes;
+
+      // Handle Validation Warning Alert
+      const alertCard = document.getElementById('ocr-validation-alert');
+      const missingList = document.getElementById('alert-missing-fields');
+
+      if (!result.isValid) {
+        if (alertCard) alertCard.style.display = 'flex';
+        if (missingList) {
+          missingList.innerHTML = (result.missingFields || []).map(f => `<li>Missing or illegible: ${f}</li>`).join('');
+        }
+      } else {
+        if (alertCard) alertCard.style.display = 'none';
+      }
 
       // Update UI
       this.updateStatusBadge(this.scanStatus, this.confidenceScore);
