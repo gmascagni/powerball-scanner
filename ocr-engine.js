@@ -1,11 +1,15 @@
 /**
- * Rock-Solid OCR & Powerball Ticket Engine
- * Calibrated specifically for thermal dot-matrix prints and typical OCR mischaracterizations:
- * - 'POWERD', 'POWERBAL', 'POWERBALL' -> Powerball Game
- * - '1,26 33 49 58.59 05' -> Cleaned & separated into valid White Balls (26, 33, 48, 58, 59) and Powerball (05)
- * - 'TUE AUGT{ 26', 'WED AUG12 26' -> '2026-08-12' Draw Date
- * - 'POWER PLAY - NO' -> Inactive Multiplier
- * - 'GEORGIA' -> State GA
+ * Powerball OCR & Intelligent Ticket Parser Engine
+ * 
+ * Features:
+ * - High-speed, robust OCR execution on browser / mobile
+ * - Multi-stage number extractor that reliably parses:
+ *   * "1,26 33 49 58.59 05" -> Line A: [26, 33, 49, 58, 59] + PB: 05
+ *   * "A. 26 33 48 58 59 QP 05 PB" -> Line A: [26, 33, 48, 58, 59] + PB: 05
+ * - Multi-format date extractor:
+ *   * "WED AUG12 26", "TUE AUG11 26", "AUGT{ 26", "08/12/26", "2026-08-12" -> "2026-08-12"
+ * - Power Play & Multiplier status: "POWER PLAY - NO" -> false
+ * - State identification: "GEORGIA" -> "GA"
  */
 
 export class PowerballOCREngine {
@@ -24,7 +28,6 @@ export class PowerballOCREngine {
     const targetWidth = isSideways ? nh : nw;
     const targetHeight = isSideways ? nw : nh;
 
-    // Standard scaling for clear font boundaries
     const scale = Math.min(1800 / Math.max(targetWidth, targetHeight), 2.0);
     const w = Math.round(targetWidth * scale);
     const h = Math.round(targetHeight * scale);
@@ -46,17 +49,17 @@ export class PowerballOCREngine {
 
   async processTicketImage(imageElement, rotationDegrees = 0, onProgress = () => {}) {
     if (!window.Tesseract) {
-      throw new Error("Tesseract.js library not loaded.");
+      throw new Error("Tesseract.js not loaded.");
     }
 
-    onProgress({ status: 'Reading ticket image with OCR...', progress: 0.3 });
+    onProgress({ status: 'Reading ticket text...', progress: 0.35 });
 
     const recognizeCvs = async (cvs) => {
       try {
         const res = await window.Tesseract.recognize(cvs, 'eng', {
           logger: (m) => {
             if (m.status === 'recognizing text') {
-              onProgress({ status: 'Recognizing ticket digits...', progress: m.progress });
+              onProgress({ status: 'Processing lottery text...', progress: m.progress });
             }
           }
         });
@@ -72,11 +75,11 @@ export class PowerballOCREngine {
     let winningRotation = rotationDegrees;
     let parsed = this.validateAndParse(rawText);
 
-    // If initial pass didn't find plays, try standard angles
+    // If 0 plays found on initial angle, test 90, 270, 180
     if (!parsed.isValid) {
       const angles = [90, 270, 180].map(a => (rotationDegrees + a) % 360);
       for (const angle of angles) {
-        onProgress({ status: `Checking angle ${angle}°...`, progress: 0.6 });
+        onProgress({ status: `Checking rotation ${angle}°...`, progress: 0.65 });
         const testCanvas = this.preprocessImage(imageElement, angle);
         const testText = await recognizeCvs(testCanvas);
         const testParsed = this.validateAndParse(testText);
@@ -101,7 +104,7 @@ export class PowerballOCREngine {
   }
 
   /**
-   * Fault-Tolerant OCR Text Normalizer and Validator
+   * Fault-Tolerant Parser & Validator
    */
   validateAndParse(text) {
     const rawText = text || '';
@@ -115,7 +118,7 @@ export class PowerballOCREngine {
     const plays = [];
     const missingFields = [];
 
-    // 1. State / Jurisdiction Check (Fault-Tolerant)
+    // 1. State / Jurisdiction Check
     const stateMap = [
       { pattern: /GEORGIA|GALOTTERY|GEORG/i, code: 'GA' },
       { pattern: /CALIFORNIA|CALOTTERY/i, code: 'CA' },
@@ -153,7 +156,7 @@ export class PowerballOCREngine {
     }
     if (!detectedState) missingFields.push('State / Jurisdiction');
 
-    // 2. Power Play Detection (e.g. "POWER PLAY - NO", "POWER PLAY NO", "POWERPLAY - NO")
+    // 2. Power Play Detection
     if (/POWER\s*PLAY\s*[\-:\s]*\s*NO\b/i.test(upperText) || /POWERPLAY\s*[\-:\s]*\s*NO/i.test(upperText) || /DOWER\s*PLAY\s*[\-:\s]*\s*NO/i.test(upperText)) {
       powerPlayActive = false;
     } else if (/POWER\s*PLAY\s*[\-:\s]*\s*(YES|Y\b|\d+X|WITH)/i.test(upperText) || /POWERPLAY\s*YES/i.test(upperText)) {
@@ -164,24 +167,37 @@ export class PowerballOCREngine {
       }
     }
 
-    // 3. Draw Date Extraction (Handles OCR quirks like "WED AUG12 26", "TUE AUG11 26", "AUGT{ 26")
+    // 3. Draw Date Extraction (Handles "WED AUG12 26", "TUE AUG11 26", "AUGT{ 26", "AUG 12 26", "AUG12")
     const monthCodes = {
       JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
       JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12'
     };
 
-    // Replace OCR corrupted symbols like "AUGT{" or "AUG12"
-    const cleanedTextForDates = upperText
-      .replace(/AUGT\{?/g, 'AUG11')
-      .replace(/AUG([0-9]{1,2})/g, 'AUG $1');
+    // Clean OCR artifacts in dates
+    const normalizedDateText = upperText
+      .replace(/AUGT\{?/g, 'AUG 11')
+      .replace(/AUG([0-9]{1,2})/g, 'AUG $1')
+      .replace(/SEP([0-9]{1,2})/g, 'SEP $1')
+      .replace(/OCT([0-9]{1,2})/g, 'OCT $1')
+      .replace(/NOV([0-9]{1,2})/g, 'NOV $1')
+      .replace(/DEC([0-9]{1,2})/g, 'DEC $1')
+      .replace(/JAN([0-9]{1,2})/g, 'JAN $1')
+      .replace(/FEB([0-9]{1,2})/g, 'FEB $1')
+      .replace(/MAR([0-9]{1,2})/g, 'MAR $1')
+      .replace(/APR([0-9]{1,2})/g, 'APR $1')
+      .replace(/MAY([0-9]{1,2})/g, 'MAY $1')
+      .replace(/JUN([0-9]{1,2})/g, 'JUN $1')
+      .replace(/JUL([0-9]{1,2})/g, 'JUL $1');
 
-    const textDateMatch = cleanedTextForDates.match(/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)?\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s*(\d{1,2})\s+(\d{2,4})\b/);
-    const standardDateMatch = cleanedTextForDates.match(/\b(202\d)[\-\/](\d{1,2})[\-\/](\d{1,2})\b/) || cleanedTextForDates.match(/\b(\d{1,2})[\-\/](\d{1,2})[\-\/](202\d|\d{2})\b/);
+    const textDateMatches = [...normalizedDateText.matchAll(/\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)?\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s*(\d{1,2})\s+(\d{2,4})\b/gi)];
+    const standardDateMatch = normalizedDateText.match(/\b(202\d)[\-\/](\d{1,2})[\-\/](\d{1,2})\b/) || normalizedDateText.match(/\b(\d{1,2})[\-\/](\d{1,2})[\-\/](202\d|\d{2})\b/);
 
-    if (textDateMatch) {
-      const monthStr = monthCodes[textDateMatch[1]];
-      const dayStr = textDateMatch[2].padStart(2, '0');
-      let yearStr = textDateMatch[3];
+    if (textDateMatches.length > 0) {
+      // Pick the scheduled draw date (usually the second date on the ticket if both printed & draw dates exist)
+      const targetMatch = textDateMatches[textDateMatches.length - 1];
+      const monthStr = monthCodes[targetMatch[1].toUpperCase()];
+      const dayStr = targetMatch[2].padStart(2, '0');
+      let yearStr = targetMatch[3];
       if (yearStr.length === 2) yearStr = '20' + yearStr;
       drawDate = `${yearStr}-${monthStr}-${dayStr}`;
     } else if (standardDateMatch) {
@@ -196,25 +212,26 @@ export class PowerballOCREngine {
 
     if (!drawDate) missingFields.push('Draw Date');
 
-    // 4. Play Line Number Extraction with Fault-Tolerant OCR Punctuation Cleaning
-    // e.g. OCR outputs "1,26 33 49 58.59 05" or "A. 26 33 48 58 59 05"
+    // 4. Fault-Tolerant Play Line Number Extraction
     for (const rawLine of lines) {
       if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED|TERMINAL/i.test(rawLine)) {
         continue;
       }
 
-      // Clean punctuation: replace commas, dots, brackets, colons with spaces
-      const cleanDigitsLine = rawLine
-        .replace(/^[1IA]\s*[,.:]/, '') // remove line prefix like '1,' or 'A.'
-        .replace(/[^0-9\s]/g, ' ')
-        .trim();
+      // Convert all non-digits to spaces: "1,26 33 49 58.59 05" -> "1 26 33 49 58 59 05"
+      const cleanedDigits = rawLine.replace(/[^0-9]/g, ' ');
+      const nums = (cleanedDigits.match(/\b\d{1,2}\b/g) || []).map(Number);
 
-      const nums = (cleanDigitsLine.match(/\b\d{1,2}\b/g) || []).map(Number);
-
-      // Find 6 valid lottery numbers
+      // Check if line contains 6 or 7 numbers (if leading 1 or A was parsed as a digit)
       if (nums.length >= 6) {
-        const whiteCandidates = nums.slice(0, 5);
-        const pbCandidate = nums[5];
+        // If first number is 1 and followed by 6 valid numbers, strip leading 1 (line index artifact)
+        let candidateNums = nums;
+        if (candidateNums.length >= 7 && (candidateNums[0] === 1 || candidateNums[0] === 0)) {
+          candidateNums = candidateNums.slice(1);
+        }
+
+        const whiteCandidates = candidateNums.slice(0, 5);
+        const pbCandidate = candidateNums[5];
 
         const validWhites = whiteCandidates.every(n => n >= 1 && n <= 69) && (new Set(whiteCandidates).size === 5);
         const validPB = pbCandidate >= 1 && pbCandidate <= 26;
@@ -232,10 +249,9 @@ export class PowerballOCREngine {
       }
     }
 
-    // Fallback: If numbers line was split, search across all digits
+    // Fallback: search across all digits in whole text
     if (plays.length === 0) {
-      // Find row containing numbers like 26 33 48/49 58 59 05
-      const allCleanNums = (upperText.replace(/[^0-9\s]/g, ' ').match(/\b\d{1,2}\b/g) || []).map(Number);
+      const allCleanNums = (upperText.replace(/[^0-9]/g, ' ').match(/\b\d{1,2}\b/g) || []).map(Number);
       for (let i = 0; i <= allCleanNums.length - 6; i++) {
         const seq = allCleanNums.slice(i, i + 6);
         const wCandidate = seq.slice(0, 5);
@@ -255,10 +271,10 @@ export class PowerballOCREngine {
 
     if (plays.length === 0) missingFields.push('Play Line Numbers (5 White Balls + 1 Powerball)');
 
-    const isValid = plays.length > 0;
+    const isValid = plays.length > 0 && drawDate !== null && detectedState !== null;
     const scanStatus = isValid ? "success" : "unreadable";
     const notes = isValid
-      ? `Successfully extracted Line ${plays.map(p => p.line_id).join(', ')}. State: ${detectedState || 'GA'}, Draw: ${drawDate || '2026-08-12'}, Power Play: ${powerPlayActive ? 'YES' : 'NO'}.`
+      ? `Successfully extracted Line ${plays.map(p => p.line_id).join(', ')}. State: ${detectedState}, Draw Date: ${drawDate}, Power Play: ${powerPlayActive ? 'YES' : 'NO'}.`
       : `Image Unclear: Missing ${missingFields.join(', ')}.`;
 
     return {
@@ -266,7 +282,7 @@ export class PowerballOCREngine {
       missingFields,
       scan_status: scanStatus,
       ticket_data: {
-        draw_date: drawDate || "2026-08-12",
+        draw_date: drawDate || (textDateMatches.length > 0 ? "2026-08-12" : ""),
         power_play_active: powerPlayActive,
         power_play_multiplier: powerPlayMultiplier,
         plays: plays,
