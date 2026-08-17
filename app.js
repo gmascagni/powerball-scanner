@@ -342,29 +342,22 @@ class PowerballScannerApp {
     this.previewImage.style.transform = 'rotate(0deg)';
     const reader = new FileReader();
     reader.onload = (e) => {
-      this.previewImage.src = e.target.result;
-      this.imagePreviewCard.style.display = 'block';
       this.previewImage.onload = () => {
         this.processImageElement(this.previewImage);
       };
+      this.previewImage.src = e.target.result;
+      this.imagePreviewCard.style.display = 'block';
     };
     reader.readAsDataURL(file);
   }
 
   async processImageElement(imgElement) {
     this.ocrProgressContainer.style.display = 'block';
-    this.ocrProgressBar.style.width = '10%';
-    this.ocrPercentage.textContent = '10%';
-    this.ocrStatusText.textContent = 'Enhancing ticket image...';
+    this.ocrProgressBar.style.width = '15%';
+    this.ocrPercentage.textContent = '15%';
+    this.ocrStatusText.textContent = 'Enhancing lottery thermal print...';
 
     try {
-      // Preprocess image and render to preprocessed canvas
-      const procCanvas = this.ocrEngine.preprocessImage(imgElement, this.rotationAngle);
-      this.preprocessedCanvas.width = procCanvas.width;
-      this.preprocessedCanvas.height = procCanvas.height;
-      const pCtx = this.preprocessedCanvas.getContext('2d');
-      pCtx.drawImage(procCanvas, 0, 0);
-
       const result = await this.ocrEngine.processTicketImage(imgElement, this.rotationAngle, (progressInfo) => {
         const pct = Math.round((progressInfo.progress || 0) * 100);
         this.ocrProgressBar.style.width = `${pct}%`;
@@ -372,23 +365,37 @@ class PowerballScannerApp {
         this.ocrStatusText.textContent = progressInfo.status;
       });
 
+      // Update rotation if auto-orientation found a match
+      if (result.appliedRotation !== undefined && result.appliedRotation !== this.rotationAngle) {
+        this.rotationAngle = result.appliedRotation;
+        this.previewImage.style.transform = `rotate(${this.rotationAngle}deg)`;
+      }
+
+      // Render preprocessed canvas
+      if (result.preprocessedCanvas) {
+        this.preprocessedCanvas.width = result.preprocessedCanvas.width;
+        this.preprocessedCanvas.height = result.preprocessedCanvas.height;
+        const pCtx = this.preprocessedCanvas.getContext('2d');
+        pCtx.drawImage(result.preprocessedCanvas, 0, 0);
+      }
+
       this.ocrProgressBar.style.width = '100%';
       this.ocrPercentage.textContent = '100%';
       this.ocrStatusText.textContent = 'Extraction complete';
 
       // Update Debug Raw Text Box
       if (this.rawOcrText) {
-        this.rawOcrText.textContent = result.rawText || '(No text recognized by OCR)';
+        this.rawOcrText.textContent = result.rawText || '(No text recognized)';
       }
 
       setTimeout(() => {
         this.ocrProgressContainer.style.display = 'none';
-      }, 1000);
+      }, 800);
 
       // Populate ticket data
       this.currentTicket = {
         draw_date: result.ticket_data.draw_date || this.currentTicket.draw_date,
-        power_play_active: result.ticket_data.power_play_active,
+        power_play_active: Boolean(result.ticket_data.power_play_active),
         state: result.ticket_data.state || '',
         plays: result.ticket_data.plays.length > 0 ? result.ticket_data.plays : []
       };
@@ -408,7 +415,7 @@ class PowerballScannerApp {
       this.ocrProgressContainer.style.display = 'none';
       this.scanStatus = 'unreadable';
       this.confidenceScore = 0.0;
-      this.scanNotes = 'OCR engine failed to parse ticket image. Please rotate image or enter numbers manually.';
+      this.scanNotes = 'Could not parse numbers from ticket. Try rotating or check image clarity.';
       this.updateStatusBadge('unreadable', 0.0);
     }
   }
