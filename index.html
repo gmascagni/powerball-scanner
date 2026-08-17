@@ -59,15 +59,25 @@
           </div>
         </div>
 
-        <!-- Upload Zone -->
+        <!-- Upload & Mobile Camera Actions Zone -->
         <div id="upload-zone" class="dropzone active">
+          <!-- Direct phone camera input -->
+          <input type="file" id="ticket-camera-input" accept="image/*" capture="environment" class="file-input-hidden" />
+          <!-- Direct gallery upload input -->
           <input type="file" id="ticket-file-input" accept="image/*" class="file-input-hidden" />
+
           <div class="dropzone-content">
-            <div class="dropzone-icon-ring">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <div class="drop-buttons-wrapper">
+              <button type="button" id="btn-trigger-camera-input" class="btn btn-primary btn-action-large">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                Take Photo of Ticket
+              </button>
+              <button type="button" id="btn-trigger-file-input" class="btn btn-secondary btn-action-large">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                Choose from Gallery
+              </button>
             </div>
-            <p class="drop-primary">Tap to take photo or <span class="browse-link">upload</span></p>
-            <p class="drop-hint">Clear lighting & flat surface recommended</p>
+            <p class="drop-hint">Hold camera steady directly above ticket in clear lighting</p>
           </div>
         </div>
 

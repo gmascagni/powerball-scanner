@@ -106,6 +106,9 @@ class PowerballScannerApp {
     this.uploadZone = document.getElementById('upload-zone');
     this.cameraZone = document.getElementById('camera-zone');
     this.fileInput = document.getElementById('ticket-file-input');
+    this.cameraInput = document.getElementById('ticket-camera-input');
+    this.btnTriggerCameraInput = document.getElementById('btn-trigger-camera-input');
+    this.btnTriggerFileInput = document.getElementById('btn-trigger-file-input');
 
     // Camera elements
     this.cameraVideo = document.getElementById('camera-video');
@@ -191,6 +194,28 @@ class PowerballScannerApp {
         this.handleFileUpload(e.dataTransfer.files[0]);
       }
     });
+    // Trigger Buttons for Mobile Camera & Gallery
+    if (this.btnTriggerCameraInput && this.cameraInput) {
+      this.btnTriggerCameraInput.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.cameraInput.click();
+      });
+    }
+    if (this.btnTriggerFileInput && this.fileInput) {
+      this.btnTriggerFileInput.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.fileInput.click();
+      });
+    }
+
+    if (this.cameraInput) {
+      this.cameraInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+          this.handleFileUpload(e.target.files[0]);
+        }
+      });
+    }
+
     this.fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files[0]) {
         this.handleFileUpload(e.target.files[0]);

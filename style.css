@@ -331,33 +331,40 @@ body {
   cursor: pointer;
 }
 
-.dropzone-icon-ring {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: var(--bg-surface-raised);
-  color: var(--text-secondary);
+.dropzone-content {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  margin: 0 auto 1rem;
-  border: 1px solid var(--border-subtle);
+  gap: 0.85rem;
 }
 
-.drop-primary {
-  font-weight: 600;
+.drop-buttons-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 320px;
+}
+
+@media (min-width: 480px) {
+  .drop-buttons-wrapper {
+    flex-direction: row;
+    max-width: 420px;
+  }
+}
+
+.btn-action-large {
+  padding: 0.85rem 1.25rem;
   font-size: 0.95rem;
-  margin-bottom: 0.35rem;
-}
-
-.browse-link {
-  color: var(--pb-red);
-  text-decoration: underline;
+  font-weight: 700;
+  width: 100%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .drop-hint {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-tertiary);
+  text-align: center;
 }
 
 /* Camera Stream Zone */

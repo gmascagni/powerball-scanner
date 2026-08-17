@@ -1,6 +1,6 @@
 /**
- * Powerball OCR & Image Processing Engine
- * Enhanced with multi-scale Otsu thresholding and strict US Lottery ticket validation.
+ * Powerball OCR & High-Accuracy Recognition Engine
+ * Calibrated specifically for thermal dot-matrix numbers and background watermark filtering
  */
 
 export class PowerballOCREngine {
@@ -15,13 +15,12 @@ export class PowerballOCREngine {
       this.worker = await window.Tesseract.createWorker('eng', 1, {
         logger: (m) => {
           if (m.status === 'recognizing text') {
-            onProgress({ status: 'Reading numbers & draw info...', progress: m.progress });
+            onProgress({ status: 'Scanning lottery numbers & lines...', progress: m.progress });
           }
         }
       });
       await this.worker.setParameters({
         tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-*#$@ ',
-        tessedit_pageseg_mode: '6', // Assume uniform block of text
       });
       return this.worker;
     } else {
@@ -30,7 +29,7 @@ export class PowerballOCREngine {
   }
 
   /**
-   * Pre-process image with rotation, high contrast, and Otsu auto-binarization
+   * Pre-process image to remove thermal slip patterns and enhance dark dot-matrix text
    */
   preprocessImage(imageElement, rotationDegrees = 0) {
     const canvas = document.createElement('canvas');
@@ -46,7 +45,8 @@ export class PowerballOCREngine {
     const targetHeight = isSideways ? nw : nh;
 
     // High resolution scaling for dot-matrix lottery receipts
-    const scale = Math.min(2000 / Math.max(targetWidth, targetHeight), 2.2);
+    const maxDim = 2000;
+    const scale = Math.min(maxDim / Math.max(targetWidth, targetHeight), 2.5);
     const w = Math.round(targetWidth * scale);
     const h = Math.round(targetHeight * scale);
 
@@ -62,55 +62,23 @@ export class PowerballOCREngine {
     ctx.drawImage(imageElement, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
 
-    // Pixel processing: High-contrast binarization
+    // Pixel processing: Filter background orange/yellow tint & keep only deep black thermal dots
     const imgData = ctx.getImageData(0, 0, w, h);
     const data = imgData.data;
 
-    // Compute histogram for Otsu thresholding
-    const histogram = new Array(256).fill(0);
-    const grays = new Uint8Array(w * h);
-
-    for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
+    for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-      grays[gIdx] = gray;
-      histogram[gray]++;
-    }
 
-    // Otsu threshold computation
-    const totalPixels = w * h;
-    let sum = 0;
-    for (let i = 0; i < 256; i++) sum += i * histogram[i];
+      // Perceptual brightness
+      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
 
-    let sumB = 0;
-    let wB = 0;
-    let wF = 0;
-    let varMax = 0;
-    let threshold = 135;
+      // Thermal dots are significantly darker than paper background/tint
+      // If pixel is sufficiently dark, turn pure black; otherwise pure white
+      const isInk = (gray < 118) && (r < 135 && g < 135 && b < 135);
+      const val = isInk ? 0 : 255;
 
-    for (let t = 0; t < 256; t++) {
-      wB += histogram[t];
-      if (wB === 0) continue;
-      wF = totalPixels - wB;
-      if (wF === 0) break;
-
-      sumB += t * histogram[t];
-      const mB = sumB / wB;
-      const mF = (sum - sumB) / wF;
-
-      const varBetween = wB * wF * (mB - mF) * (mB - mF);
-      if (varBetween > varMax) {
-        varMax = varBetween;
-        threshold = t;
-      }
-    }
-
-    // Apply strict thresholding (clean black text on crisp white background)
-    const tunedThreshold = Math.min(threshold, 145);
-    for (let i = 0, gIdx = 0; i < data.length; i += 4, gIdx++) {
-      const val = grays[gIdx] < tunedThreshold ? 0 : 255;
       data[i] = val;
       data[i + 1] = val;
       data[i + 2] = val;
@@ -121,7 +89,7 @@ export class PowerballOCREngine {
   }
 
   /**
-   * Run OCR on image with automatic rotation fallback if no numbers found
+   * Run OCR on image with automatic rotation fallback
    */
   async processTicketImage(imageElement, rotationDegrees = 0, onProgress = () => {}) {
     await this.initWorker(onProgress);
@@ -132,12 +100,12 @@ export class PowerballOCREngine {
     let rawText = result.data.text || '';
     let parsed = this.parsePowerballText(rawText);
 
-    // Auto-Orientation Fallback: If 0 plays found, try 90, 270, 180 rotations automatically
+    // Auto-Orientation Fallback if 0 plays found
     let winningRotation = rotationDegrees;
     if (parsed.plays.length === 0) {
       const rotationsToTry = [90, 270, 180].map(r => (rotationDegrees + r) % 360);
       for (const tryRot of rotationsToTry) {
-        onProgress({ status: `Trying orientation ${tryRot}°...`, progress: 0.5 });
+        onProgress({ status: `Detecting orientation (${tryRot}°)...`, progress: 0.5 });
         const testCanvas = this.preprocessImage(imageElement, tryRot);
         const testResult = await this.worker.recognize(testCanvas);
         const testText = testResult.data.text || '';
@@ -176,7 +144,6 @@ export class PowerballOCREngine {
     let jurisdiction = null;
 
     // 1. State / Jurisdiction Detection
-    // Strict priority: Match full lottery names first before 2-letter codes to avoid false "TX" matches from words like "XTRA", "NEXT", "TICKET"
     const stateNameMap = [
       { pattern: /GEORGIA|GALOTTERY/i, code: 'GA' },
       { pattern: /CALIFORNIA|CALOTTERY/i, code: 'CA' },
@@ -233,7 +200,7 @@ export class PowerballOCREngine {
       }
     }
 
-    // 3. Draw Date Detection (e.g. "WED AUG12 26", "AUG 12 2026", "08/12/2026", "2026-08-12")
+    // 3. Draw Date Detection
     const monthCodes = {
       JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
       JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12'
@@ -259,8 +226,6 @@ export class PowerballOCREngine {
     }
 
     // 4. Play Line Detection (Strict Line Header A, B, C, D, E)
-    // Line format on US tickets: "A. 26 33 48 58 59 QP 05 PB" or "A 26 33 48 58 59 05"
-    // We explicitly exclude promo text ($2 MILLION, 2026 FORD BRONCO, JACKPOT $975 MILL)
     for (const rawLine of lines) {
       // Must not be promotional copy or timestamp
       if (/MILLION|JACKPOT|FANTASY|MEGA|BRONCO|SCRATCHERS|TODAY|COULD|PRINTED|TERMINAL/i.test(rawLine)) {
@@ -311,7 +276,7 @@ export class PowerballOCREngine {
               white_balls: whites.sort((a, b) => a - b),
               powerball: pb
             });
-            break; // Stop after first valid line for single play slips
+            break;
           }
         }
       }
