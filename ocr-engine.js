@@ -11,18 +11,20 @@ export class PowerballOCREngine {
   async initWorker(onProgress = () => {}) {
     if (this.worker) return this.worker;
     if (window.Tesseract) {
-      onProgress({ status: 'Loading OCR engine...', progress: 0.15 });
-      this.worker = await window.Tesseract.createWorker('eng', 1, {
-        logger: (m) => {
-          if (m.status === 'recognizing text') {
-            onProgress({ status: 'Scanning lottery numbers & lines...', progress: m.progress });
+      try {
+        onProgress({ status: 'Loading OCR engine...', progress: 0.15 });
+        this.worker = await window.Tesseract.createWorker('eng', 1, {
+          logger: (m) => {
+            if (m.status === 'recognizing text') {
+              onProgress({ status: 'Recognizing ticket digits & text...', progress: m.progress });
+            }
           }
-        }
-      });
-      await this.worker.setParameters({
-        tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-*#$@ ',
-      });
-      return this.worker;
+        });
+        return this.worker;
+      } catch (err) {
+        console.warn('Worker create error, falling back to direct recognize:', err);
+        return null;
+      }
     } else {
       throw new Error("Tesseract.js not loaded.");
     }
@@ -92,12 +94,21 @@ export class PowerballOCREngine {
    * Run OCR on image with automatic rotation fallback
    */
   async processTicketImage(imageElement, rotationDegrees = 0, onProgress = () => {}) {
-    await this.initWorker(onProgress);
+    const worker = await this.initWorker(onProgress);
 
-    // First attempt with current requested rotation
+    const recognizeCanvas = async (cvs) => {
+      if (worker) {
+        return await worker.recognize(cvs);
+      } else if (window.Tesseract && window.Tesseract.recognize) {
+        return await window.Tesseract.recognize(cvs, 'eng');
+      }
+      throw new Error("OCR recognition service unavailable.");
+    };
+
+    // First attempt with current rotation
     let canvas = this.preprocessImage(imageElement, rotationDegrees);
-    let result = await this.worker.recognize(canvas);
-    let rawText = result.data.text || '';
+    let result = await recognizeCanvas(canvas);
+    let rawText = result?.data?.text || '';
     let parsed = this.parsePowerballText(rawText);
 
     // Auto-Orientation Fallback if 0 plays found
@@ -107,8 +118,8 @@ export class PowerballOCREngine {
       for (const tryRot of rotationsToTry) {
         onProgress({ status: `Detecting orientation (${tryRot}°)...`, progress: 0.5 });
         const testCanvas = this.preprocessImage(imageElement, tryRot);
-        const testResult = await this.worker.recognize(testCanvas);
-        const testText = testResult.data.text || '';
+        const testResult = await recognizeCanvas(testCanvas);
+        const testText = testResult?.data?.text || '';
         const testParsed = this.parsePowerballText(testText);
         if (testParsed.plays.length > 0) {
           rawText = testText;
@@ -124,7 +135,7 @@ export class PowerballOCREngine {
       rawText,
       preprocessedCanvas: canvas,
       appliedRotation: winningRotation,
-      ocrConfidence: (result.data.confidence || 80) / 100,
+      ocrConfidence: (result?.data?.confidence || 80) / 100,
       ...parsed
     };
   }
