@@ -525,6 +525,35 @@ body {
   max-height: 220px;
   width: auto;
   object-fit: contain;
+  transition: transform 0.2s ease;
+}
+
+/* OCR Debug Details */
+.ocr-debug-details {
+  margin-top: 0.75rem;
+  background: var(--bg-base);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.ocr-debug-details summary {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.raw-ocr-box {
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* OCR Progress */

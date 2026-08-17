@@ -103,6 +103,8 @@
           <div class="preview-header">
             <span class="preview-label">Scanned Ticket Preview</span>
             <div class="preview-controls">
+              <button id="btn-rotate-left" class="btn btn-sm btn-secondary" title="Rotate 90° Left">↺ 90°</button>
+              <button id="btn-rotate-right" class="btn btn-sm btn-secondary" title="Rotate 90° Right">↻ 90°</button>
               <label class="toggle-preprocess">
                 <input type="checkbox" id="toggle-preprocess-view"> B&W Filter
               </label>
@@ -124,6 +126,12 @@
               <div id="ocr-progress-bar" class="progress-fill" style="width: 0%;"></div>
             </div>
           </div>
+
+          <!-- OCR Debug Raw Output Drawer -->
+          <details class="ocr-debug-details">
+            <summary>View Raw OCR Recognized Text</summary>
+            <pre id="raw-ocr-text" class="raw-ocr-box">No OCR text yet.</pre>
+          </details>
         </div>
 
         <!-- Extracted Plays Editor & Metadata -->

@@ -113,12 +113,16 @@ class PowerballScannerApp {
     this.btnStopCamera = document.getElementById('btn-stop-camera');
     this.btnSwitchCamera = document.getElementById('btn-switch-camera');
 
-    // Preview
+    // Preview & Preprocessing
     this.imagePreviewCard = document.getElementById('image-preview-card');
     this.previewImage = document.getElementById('preview-image');
     this.preprocessedCanvas = document.getElementById('preprocessed-canvas');
     this.togglePreprocess = document.getElementById('toggle-preprocess-view');
     this.btnClearImage = document.getElementById('btn-clear-image');
+    this.btnRotateLeft = document.getElementById('btn-rotate-left');
+    this.btnRotateRight = document.getElementById('btn-rotate-right');
+    this.rawOcrText = document.getElementById('raw-ocr-text');
+    this.rotationAngle = 0;
 
     // Progress
     this.ocrProgressContainer = document.getElementById('ocr-progress-container');
@@ -197,7 +201,7 @@ class PowerballScannerApp {
     this.btnCaptureCamera.addEventListener('click', () => this.captureFromCamera());
     this.btnStopCamera.addEventListener('click', () => this.stopCamera());
 
-    // Image preview toggle
+    // Image preview toggle & Rotation
     this.togglePreprocess.addEventListener('change', (e) => {
       if (e.target.checked) {
         this.previewImage.style.display = 'none';
@@ -207,6 +211,17 @@ class PowerballScannerApp {
         this.preprocessedCanvas.style.display = 'none';
       }
     });
+
+    this.btnRotateLeft.addEventListener('click', () => {
+      this.rotationAngle = (this.rotationAngle - 90 + 360) % 360;
+      this.applyRotationAndProcess();
+    });
+
+    this.btnRotateRight.addEventListener('click', () => {
+      this.rotationAngle = (this.rotationAngle + 90) % 360;
+      this.applyRotationAndProcess();
+    });
+
     this.btnClearImage.addEventListener('click', () => this.clearImage());
 
     // Ticket Metadata & Plays
@@ -311,11 +326,20 @@ class PowerballScannerApp {
     this.processImageElement(this.previewImage);
   }
 
+  applyRotationAndProcess() {
+    this.previewImage.style.transform = `rotate(${this.rotationAngle}deg)`;
+    if (this.previewImage.src) {
+      this.processImageElement(this.previewImage);
+    }
+  }
+
   handleFileUpload(file) {
     if (!file.type.startsWith('image/')) {
       alert('Please upload an image file (PNG, JPG, WEBP).');
       return;
     }
+    this.rotationAngle = 0;
+    this.previewImage.style.transform = 'rotate(0deg)';
     const reader = new FileReader();
     reader.onload = (e) => {
       this.previewImage.src = e.target.result;
@@ -335,13 +359,13 @@ class PowerballScannerApp {
 
     try {
       // Preprocess image and render to preprocessed canvas
-      const procCanvas = this.ocrEngine.preprocessImage(imgElement);
+      const procCanvas = this.ocrEngine.preprocessImage(imgElement, this.rotationAngle);
       this.preprocessedCanvas.width = procCanvas.width;
       this.preprocessedCanvas.height = procCanvas.height;
       const pCtx = this.preprocessedCanvas.getContext('2d');
       pCtx.drawImage(procCanvas, 0, 0);
 
-      const result = await this.ocrEngine.processTicketImage(imgElement, (progressInfo) => {
+      const result = await this.ocrEngine.processTicketImage(imgElement, this.rotationAngle, (progressInfo) => {
         const pct = Math.round((progressInfo.progress || 0) * 100);
         this.ocrProgressBar.style.width = `${pct}%`;
         this.ocrPercentage.textContent = `${pct}%`;
@@ -352,16 +376,21 @@ class PowerballScannerApp {
       this.ocrPercentage.textContent = '100%';
       this.ocrStatusText.textContent = 'Extraction complete';
 
+      // Update Debug Raw Text Box
+      if (this.rawOcrText) {
+        this.rawOcrText.textContent = result.rawText || '(No text recognized by OCR)';
+      }
+
       setTimeout(() => {
         this.ocrProgressContainer.style.display = 'none';
       }, 1000);
 
-      // Populate current ticket data
+      // Populate ticket data
       this.currentTicket = {
         draw_date: result.ticket_data.draw_date || this.currentTicket.draw_date,
         power_play_active: result.ticket_data.power_play_active,
         state: result.ticket_data.state || '',
-        plays: result.ticket_data.plays.length > 0 ? result.ticket_data.plays : this.currentTicket.plays
+        plays: result.ticket_data.plays.length > 0 ? result.ticket_data.plays : []
       };
 
       this.scanStatus = result.scan_status;
@@ -379,7 +408,7 @@ class PowerballScannerApp {
       this.ocrProgressContainer.style.display = 'none';
       this.scanStatus = 'unreadable';
       this.confidenceScore = 0.0;
-      this.scanNotes = 'OCR engine failed to parse ticket image. Please enter numbers manually.';
+      this.scanNotes = 'OCR engine failed to parse ticket image. Please rotate image or enter numbers manually.';
       this.updateStatusBadge('unreadable', 0.0);
     }
   }
