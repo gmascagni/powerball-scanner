@@ -239,7 +239,22 @@ class PowerballScannerApp {
     });
 
     this.btnAddPlay.addEventListener('click', () => this.addBlankPlayLine());
-    this.btnReEvaluate.addEventListener('click', () => this.evaluate());
+    this.btnReEvaluate.addEventListener('click', () => {
+      this.evaluate();
+      // Visual button feedback
+      const originalText = this.btnReEvaluate.textContent;
+      this.btnReEvaluate.textContent = '✓ Checked!';
+      this.btnReEvaluate.style.background = '#10b981';
+      setTimeout(() => {
+        this.btnReEvaluate.textContent = originalText;
+        this.btnReEvaluate.style.background = '';
+      }, 1200);
+
+      // Smooth scroll to results on mobile screens
+      if (window.innerWidth < 1024 && this.payoutBanner) {
+        this.payoutBanner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
 
     // Official Draw Inputs trigger live evaluation
     [this.drawW1, this.drawW2, this.drawW3, this.drawW4, this.drawW5, this.drawPB, this.drawMultiplierSelect].forEach(elem => {
