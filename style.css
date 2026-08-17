@@ -538,32 +538,77 @@ body {
   transition: transform 0.2s ease;
 }
 
-/* OCR Debug Details */
-.ocr-debug-details {
-  margin-top: 0.75rem;
-  background: var(--bg-base);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
+/* RAW OCR Rendered Console */
+.raw-ocr-card {
+  margin-top: 1rem;
+  background: #090c14;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-medium);
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
 }
 
-.ocr-debug-details summary {
-  padding: 0.4rem 0.75rem;
-  font-size: 0.75rem;
+.raw-ocr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.raw-ocr-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.5px;
+  color: var(--pb-gold);
+}
+
+.raw-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 8px #34d399;
+}
+
+.raw-char-badge {
+  font-size: 0.7rem;
   color: var(--text-tertiary);
-  cursor: pointer;
-  font-weight: 600;
+  font-family: var(--font-mono);
 }
 
-.raw-ocr-box {
-  padding: 0.5rem 0.75rem;
+.raw-ocr-textarea {
+  width: 100%;
+  min-height: 110px;
+  background: #05070a;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem;
+  color: #38bdf8;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 120px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  resize: vertical;
+  outline: none;
+}
+
+.raw-ocr-textarea:focus {
+  border-color: var(--pb-gold);
+}
+
+.raw-ocr-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.raw-ocr-hint {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
 }
 
 /* OCR Progress */

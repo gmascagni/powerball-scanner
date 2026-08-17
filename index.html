@@ -137,11 +137,21 @@
             </div>
           </div>
 
-          <!-- OCR Debug Raw Output Drawer -->
-          <details class="ocr-debug-details">
-            <summary>View Raw OCR Recognized Text</summary>
-            <pre id="raw-ocr-text" class="raw-ocr-box">No OCR text yet.</pre>
-          </details>
+          <!-- Live Raw OCR Rendered Data Box -->
+          <div class="raw-ocr-card">
+            <div class="raw-ocr-header">
+              <div class="raw-ocr-title">
+                <span class="raw-dot"></span>
+                <strong>RAW OCR RENDERED DATA</strong>
+              </div>
+              <span id="raw-ocr-char-count" class="raw-char-badge">0 characters</span>
+            </div>
+            <textarea id="raw-ocr-text" class="raw-ocr-textarea" placeholder="Raw OCR text captured directly from the camera/image will appear here in real-time..."></textarea>
+            <div class="raw-ocr-actions">
+              <span class="raw-ocr-hint">Edit raw text directly above or re-parse anytime:</span>
+              <button type="button" id="btn-reparse-raw" class="btn btn-sm btn-primary">Re-Parse Raw Text</button>
+            </div>
+          </div>
         </div>
 
         <!-- Mandatory Validation Warning Banner -->

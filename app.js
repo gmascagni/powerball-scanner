@@ -242,12 +242,54 @@ class PowerballScannerApp {
       this.applyRotationAndProcess();
     });
 
-    this.btnRotateRight.addEventListener('click', () => {
-      this.rotationAngle = (this.rotationAngle + 90) % 360;
-      this.applyRotationAndProcess();
-    });
+    // Raw OCR Console & Reparse
+    this.rawOcrText = document.getElementById('raw-ocr-text');
+    this.rawOcrCharCount = document.getElementById('raw-ocr-char-count');
+    this.btnReparseRaw = document.getElementById('btn-reparse-raw');
 
-    this.btnClearImage.addEventListener('click', () => this.clearImage());
+    if (this.btnReparseRaw) {
+      this.btnReparseRaw.addEventListener('click', () => {
+        const textToParse = this.rawOcrText.value;
+        const validation = this.ocrEngine.validateAndParse(textToParse);
+
+        // Update ticket data from raw text re-parse
+        this.currentTicket = {
+          draw_date: validation.ticket_data.draw_date || this.currentTicket.draw_date,
+          power_play_active: Boolean(validation.ticket_data.power_play_active),
+          state: validation.ticket_data.state || '',
+          plays: validation.ticket_data.plays.length > 0 ? validation.ticket_data.plays : []
+        };
+
+        this.scanStatus = validation.scan_status;
+        this.confidenceScore = validation.isValid ? 0.95 : 0.2;
+        this.scanNotes = validation.notes;
+
+        const alertCard = document.getElementById('ocr-validation-alert');
+        const missingList = document.getElementById('alert-missing-fields');
+
+        if (!validation.isValid) {
+          if (alertCard) alertCard.style.display = 'flex';
+          if (missingList) {
+            missingList.innerHTML = (validation.missingFields || []).map(f => `<li>Missing or illegible: ${f}</li>`).join('');
+          }
+        } else {
+          if (alertCard) alertCard.style.display = 'none';
+        }
+
+        this.updateStatusBadge(this.scanStatus, this.confidenceScore);
+        this.populateFormFields();
+        this.renderPlaysList();
+        this.evaluate();
+      });
+    }
+
+    if (this.rawOcrText) {
+      this.rawOcrText.addEventListener('input', (e) => {
+        if (this.rawOcrCharCount) {
+          this.rawOcrCharCount.textContent = `${e.target.value.length} characters`;
+        }
+      });
+    }
 
     // Ticket Metadata & Plays
     this.metaDrawDate.addEventListener('change', (e) => {
